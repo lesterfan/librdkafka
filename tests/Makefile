@@ -115,3 +115,5 @@ realclean: clean clean-output
 
 java: .PHONY
 	make -C java
+
+-include $(DEPS)
