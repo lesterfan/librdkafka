@@ -283,6 +283,8 @@ enum ErrorCode {
         ERR__UNKNOWN_BROKER = -146,
         /** Functionality not configured */
         ERR__NOT_CONFIGURED = -145,
+        /** Instance has been fenced */
+        ERR__FENCED = -144,
 
         /** End internal error codes */
 	ERR__END = -100,

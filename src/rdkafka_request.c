@@ -37,6 +37,7 @@
 #include "rdkafka_metadata.h"
 #include "rdkafka_msgset.h"
 #include "rdkafka_idempotence.h"
+#include "rdkafka_txnmgr.h"
 #include "rdkafka_sasl.h"
 
 #include "rdrand.h"
@@ -2545,6 +2546,10 @@ static int rd_kafka_handle_Produce_error (rd_kafka_broker_t *rkb,
                 RD_KAFKA_ERR_ACTION_MSG_POSSIBLY_PERSISTED,
                 RD_KAFKA_RESP_ERR_UNKNOWN_PRODUCER_ID,
 
+                RD_KAFKA_ERR_ACTION_PERMANENT|
+                RD_KAFKA_ERR_ACTION_MSG_NOT_PERSISTED,
+                RD_KAFKA_RESP_ERR_INVALID_PRODUCER_EPOCH,
+
                 /* Message was purged from out-queue due to
                  * Idempotent Producer Id change */
                 RD_KAFKA_ERR_ACTION_RETRY,
@@ -2687,7 +2692,30 @@ static int rd_kafka_handle_Produce_error (rd_kafka_broker_t *rkb,
 
         if (perr->actions & RD_KAFKA_ERR_ACTION_PERMANENT &&
             rd_kafka_is_idempotent(rk)) {
-                if (rk->rk_conf.eos.gapless) {
+                if (rd_kafka_is_transactional(rk) &&
+                    perr->err == RD_KAFKA_RESP_ERR_INVALID_PRODUCER_EPOCH) {
+                        /* Producer was fenced by new transactional producer
+                         * with the same transactional.id */
+                        rd_kafka_txn_set_fatal_error(
+                                rk,
+                                RD_KAFKA_RESP_ERR__FENCED,
+                                "ProduceRequest for %.*s [%"PRId32"] "
+                                "with %d message(s) failed: %s "
+                                "(broker %"PRId32" %s, base seq %"PRId32"): "
+                                "transactional producer fenced by newer "
+                                "producer instance",
+                                RD_KAFKAP_STR_PR(rktp->rktp_rkt->rkt_topic),
+                                rktp->rktp_partition,
+                                rd_kafka_msgq_len(&batch->msgq),
+                                rd_kafka_err2str(perr->err),
+                                rkb->rkb_nodeid,
+                                rd_kafka_pid2str(batch->pid),
+                                batch->first_seq);
+
+                        /* Drain outstanding requests and reset PID. */
+                        rd_kafka_idemp_drain_reset(rk);
+
+                } else if (rk->rk_conf.eos.gapless) {
                         /* A permanent non-idempotent error will lead to
                          * gaps in the message series, the next request
                          * will fail with ...ERR_OUT_OF_ORDER_SEQUENCE_NUMBER.

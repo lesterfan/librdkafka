@@ -525,16 +525,123 @@ static void do_test_misuse_txn (void) {
                                                errstr, sizeof(errstr)));
 
         rd_kafka_destroy(p);
+}
 
+
+/**
+ * @brief is_fatal_cb for fenced_txn test.
+ */
+static int fenced_txn_is_fatal_cb (rd_kafka_t *rk, rd_kafka_resp_err_t err,
+                                   const char *reason) {
+        TEST_SAY("is_fatal?: %s: %s\n", rd_kafka_err2str(err), reason);
+        if (err == RD_KAFKA_RESP_ERR__FENCED) {
+                TEST_SAY("Saw the expected fatal error\n");
+                return 0;
+        }
+        return 1;
+}
+
+
+/**
+ * @brief Check that transaction fencing is handled correctly.
+ */
+static void do_test_fenced_txn (rd_bool_t produce_after_fence) {
+        const char *topic = test_mk_topic_name("0103_fenced_txn", 1);
+        rd_kafka_conf_t *conf;
+        rd_kafka_t *p1, *p2;
+        rd_kafka_resp_err_t err;
+        char errstr[512];
+        uint64_t testid;
+
+        TEST_SAY(_C_BLU "[ Fenced producer transactions "
+                 "(%sproduce after fence)]\n",
+                 produce_after_fence ? "" : "do not ");
+
+        if (produce_after_fence)
+                test_curr->is_fatal_cb = fenced_txn_is_fatal_cb;
+
+        test_curr->ignore_dr_err = rd_false;
+
+        testid = test_id_generate();
+
+        test_conf_init(&conf, NULL, 30);
+
+        test_conf_set(conf, "transactional.id", topic);
+        rd_kafka_conf_set_dr_msg_cb(conf, test_dr_msg_cb);
+
+        p1 = test_create_handle(RD_KAFKA_PRODUCER, rd_kafka_conf_dup(conf));
+        p2 = test_create_handle(RD_KAFKA_PRODUCER, rd_kafka_conf_dup(conf));
+        rd_kafka_conf_destroy(conf);
+
+        TEST_CALL__(rd_kafka_init_transactions(p1, 30*1000,
+                                               errstr, sizeof(errstr)));
+
+        /* Begin a transaction */
+        TEST_CALL__(rd_kafka_begin_transaction(p1,
+                                               errstr,
+                                               sizeof(errstr)));
+
+        /* Produce some messages */
+        test_produce_msgs2(p1, topic, testid, RD_KAFKA_PARTITION_UA,
+                           0, 10, NULL, 0);
+
+        /* Initialize transactions on producer 2, this should
+         * fence off producer 1. */
+        TEST_CALL__(rd_kafka_init_transactions(p2, 30*1000,
+                                               errstr, sizeof(errstr)));
+
+        if (produce_after_fence) {
+                /* This will fail hard since the epoch was bumped. */
+                TEST_SAY("Producing after producing fencing\n");
+                test_curr->ignore_dr_err = rd_true;
+                test_produce_msgs2(p1, topic, testid, RD_KAFKA_PARTITION_UA,
+                                   0, 10, NULL, 0);
+        }
+
+
+        err = rd_kafka_commit_transaction(p1, errstr, sizeof(errstr));
+
+        if (produce_after_fence) {
+                TEST_ASSERT(rd_kafka_fatal_error(p1, NULL, 0),
+                            "Expected a fatal error to have been raised");
+
+                TEST_ASSERT(err == RD_KAFKA_RESP_ERR__STATE /* FIXME ? */,
+                            "Expected commit_transaction() to return %s, "
+                            "not %s: %s",
+                            rd_kafka_err2name(RD_KAFKA_RESP_ERR__STATE),
+                            rd_kafka_err2name(err),
+                            err ? errstr : "");
+        } else {
+                TEST_ASSERT(!err,
+                            "commit_transaction() should not have failed: "
+                            "%s: %s",
+                            rd_kafka_err2name(err), errstr);
+        }
+
+
+        rd_kafka_destroy(p1);
+        rd_kafka_destroy(p2);
+
+        /* Make sure no messages were committed. */
+        test_consume_txn_msgs_easy(topic, topic, testid,
+                                   test_get_partition_count(NULL, topic,
+                                                            10*1000),
+                                   0, NULL);
+
+        TEST_SAY(_C_GRN "[ Fenced producer transactions "
+                 "(produce_after_fence=%s) succeeded ]\n",
+                 produce_after_fence ? "yes" : "no");
 }
 
 int main_0103_transactions (int argc, char **argv) {
 
+        if (0) {
         do_test_misuse_txn();
-
         do_test_basic_producer_txn();
-
         do_test_consumer_producer_txn();
+        }
+        do_test_fenced_txn(rd_false /* no produce after fencing */);
+        do_test_fenced_txn(rd_true /* produce after fencing */);
 
         return 0;
 }
@@ -550,6 +657,7 @@ static void do_test_txn_local (void) {
         rd_kafka_resp_err_t err;
         char errstr[512];
         test_timing_t t_init;
+        int timeout_ms = 7 * 1000;
 
         /*
          * No transactional.id, init_transactions() should fail.
@@ -569,8 +677,6 @@ static void do_test_txn_local (void) {
          * No brokers, init_transactions() should time out according
          * to the timeout.
          */
-        int timeout_ms = 7*1000;
-
         conf = rd_kafka_conf_new();
         test_conf_set(conf, "transactional.id", "test");
         p = test_create_handle(RD_KAFKA_PRODUCER, conf);
@@ -598,7 +704,8 @@ static void do_test_txn_local (void) {
 
 int main_0103_transactions_local (int argc, char **argv) {
 
-        do_test_txn_local();
+        if (0)
+                do_test_txn_local();
 
         return 0;
 }

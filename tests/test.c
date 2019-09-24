@@ -2229,17 +2229,19 @@ int64_t test_consume_msgs (const char *what, rd_kafka_topic_t *rkt,
  * and expects \d exp_msgcnt with matching \p testid
  * Destroys consumer when done.
  *
+ * @param txn If true, isolation.level is set to read_committed.
  * @param partition If -1 the topic will be subscribed to, otherwise the
  *                  single partition will be assigned immediately.
  *
  * If \p group_id is NULL a new unique group is generated
  */
 void
-test_consume_msgs_easy_mv (const char *group_id, const char *topic,
-                           int32_t partition,
-                           uint64_t testid, int exp_eofcnt, int exp_msgcnt,
-                           rd_kafka_topic_conf_t *tconf,
-                           test_msgver_t *mv) {
+test_consume_msgs_easy_mv0 (const char *group_id, const char *topic,
+                            rd_bool_t txn,
+                            int32_t partition,
+                            uint64_t testid, int exp_eofcnt, int exp_msgcnt,
+                            rd_kafka_topic_conf_t *tconf,
+                            test_msgver_t *mv) {
         rd_kafka_t *rk;
         char grpid0[64];
         rd_kafka_conf_t *conf;
@@ -2248,6 +2250,9 @@ test_consume_msgs_easy_mv (const char *group_id, const char *topic,
 
         if (!group_id)
                 group_id = test_str_id_generate(grpid0, sizeof(grpid0));
+
+        if (txn)
+                test_conf_set(conf, "isolation.level", "read_committed");
 
         test_topic_conf_set(tconf, "auto.offset.reset", "smallest");
         if (exp_eofcnt != -1)
@@ -2294,6 +2299,22 @@ test_consume_msgs_easy (const char *group_id, const char *topic,
 
         test_consume_msgs_easy_mv(group_id, topic, -1, testid, exp_eofcnt,
                                   exp_msgcnt, tconf, &mv);
+
+        test_msgver_clear(&mv);
+}
+
+
+void
+test_consume_txn_msgs_easy (const char *group_id, const char *topic,
+                            uint64_t testid, int exp_eofcnt, int exp_msgcnt,
+                            rd_kafka_topic_conf_t *tconf) {
+        test_msgver_t mv;
+
+        test_msgver_init(&mv, testid);
+
+        test_consume_msgs_easy_mv0(group_id, topic, rd_true/*txn*/,
+                                   -1, testid, exp_eofcnt,
+                                   exp_msgcnt, tconf, &mv);
 
         test_msgver_clear(&mv);
 }
@@ -3425,7 +3446,7 @@ int test_consumer_poll (const char *what, rd_kafka_t *rk, uint64_t testid,
         TIMING_START(&t_cons, "CONSUME");
 
         while ((exp_eof_cnt <= 0 || eof_cnt < exp_eof_cnt) &&
-               (exp_cnt == -1 || cnt < exp_cnt)) {
+               (exp_cnt <= 0 || cnt < exp_cnt)) {
                 rd_kafka_message_t *rkmessage;
 
                 rkmessage = rd_kafka_consumer_poll(rk, tmout_multip(10*1000));
@@ -3468,6 +3489,12 @@ int test_consumer_poll (const char *what, rd_kafka_t *rk, uint64_t testid,
 
         TEST_SAY("%s: consumed %d/%d messages (%d/%d EOFs)\n",
                  what, cnt, exp_cnt, eof_cnt, exp_eof_cnt);
+
+        if (exp_cnt == 0)
+                TEST_ASSERT(cnt == 0 && eof_cnt == exp_eof_cnt,
+                            "%s: expected no messages and %d EOFs: "
+                            "got %d messages and %d EOFs",
+                            what, exp_eof_cnt, cnt, eof_cnt);
         return cnt;
 }
 

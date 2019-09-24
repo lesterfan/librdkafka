@@ -139,12 +139,12 @@ static void rd_kafka_txn_set_state (rd_kafka_t *rk,
 /**
  * @brief An unrecoverable transactional error has occurred.
  *
- * @locality rdkafka main thread
+ * @locality any
  * @locks rd_kafka_wrlock MUST NOT be held
  */
-static void rd_kafka_txn_set_fatal_error (rd_kafka_t *rk,
-                                          rd_kafka_resp_err_t err,
-                                          const char *fmt, ...) {
+void rd_kafka_txn_set_fatal_error (rd_kafka_t *rk,
+                                   rd_kafka_resp_err_t err,
+                                   const char *fmt, ...) {
         char errstr[512];
         va_list ap;
 
@@ -160,7 +160,7 @@ static void rd_kafka_txn_set_fatal_error (rd_kafka_t *rk,
         vsnprintf(errstr, sizeof(errstr), fmt, ap);
         va_end(ap);
 
-        rd_kafka_log(rk, LOG_CRIT, "TXNERR",
+        rd_kafka_log(rk, LOG_ALERT, "TXNERR",
                      "Fatal transaction error: %s (%s)",
                      errstr, rd_kafka_err2name(err));
 
@@ -1893,6 +1893,8 @@ static void rd_kafka_txn_op_timeout_cb (rd_kafka_timers_t *rkts, void *arg) {
  * @locks none
  */
 void rd_kafka_txns_term (rd_kafka_t *rk) {
+        RD_IF_FREE(rk->rk_eos.txn_errstr, rd_free);
+
         rd_kafka_timer_stop(&rk->rk_timers,
                             &rk->rk_eos.txn_register_parts_tmr, 1);
 
@@ -1902,8 +1904,6 @@ void rd_kafka_txns_term (rd_kafka_t *rk) {
         mtx_destroy(&rk->rk_eos.txn_pending_lock);
 
         rd_kafka_txn_clear_partitions(rk);
-
-
 }
 
 

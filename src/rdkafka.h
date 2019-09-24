@@ -367,6 +367,8 @@ typedef enum {
         RD_KAFKA_RESP_ERR__UNKNOWN_BROKER = -146,
         /** Functionality not configured */
         RD_KAFKA_RESP_ERR__NOT_CONFIGURED = -145,
+        /** Instance has been fenced */
+        RD_KAFKA_RESP_ERR__FENCED = -144,
 
 	/** End internal error codes */
 	RD_KAFKA_RESP_ERR__END = -100,
@@ -6300,10 +6302,23 @@ rd_kafka_send_offsets_to_transaction (
         const char *consumer_group_id,
         char *errstr, size_t errstr_size);
 
+/**
+ * @brief ..
+ *
+ *
+ * @remark Will automatically call rd_kafka_flush() to ensure all queued
+ *         messages are delivered before attempting to commit the
+ *         transaction.
+ */
 rd_kafka_resp_err_t
 rd_kafka_commit_transaction (rd_kafka_t *rk,
                              char *errstr, size_t errstr_size);
-
+/**
+ *
+ * @remark Will automatically call rd_kafka_purge() to ensure all queued
+ *         messages fail (with error code RD_KAFKA_RESP_ERR__PURGE_QUEUE or
+ *         RD_KAFKA_RESP_ERR__PURGE_INFLIGHT).
+ */
 rd_kafka_resp_err_t
 rd_kafka_abort_transaction (rd_kafka_t *rk,
                             char *errstr, size_t errstr_size);
