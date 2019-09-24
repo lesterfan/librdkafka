@@ -2541,6 +2541,7 @@ RD_EXPORT
 char *rd_kafka_memberid (const rd_kafka_t *rk);
 
 
+
 /**
  * @brief Returns the ClusterId as reported in broker metadata.
  *
